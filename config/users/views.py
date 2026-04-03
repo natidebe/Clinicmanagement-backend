@@ -46,12 +46,14 @@ class UserListView(APIView):
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
+        service_key = settings.SUPABASE_SERVICE_ROLE_KEY.strip()
+
         # Step 1 — create the auth user via Supabase Admin API
         resp = http_requests.post(
             f"{settings.SUPABASE_URL}/auth/v1/admin/users",
             headers={
-                'apikey': settings.SUPABASE_SERVICE_ROLE_KEY,
-                'Authorization': f'Bearer {settings.SUPABASE_SERVICE_ROLE_KEY}',
+                'apikey': service_key,
+                'Authorization': f'Bearer {service_key}',
                 'Content-Type': 'application/json',
             },
             json={
@@ -81,8 +83,8 @@ class UserListView(APIView):
             http_requests.delete(
                 f"{settings.SUPABASE_URL}/auth/v1/admin/users/{auth_user_id}",
                 headers={
-                    'apikey': settings.SUPABASE_SERVICE_ROLE_KEY,
-                    'Authorization': f'Bearer {settings.SUPABASE_SERVICE_ROLE_KEY}',
+                    'apikey': service_key,
+                    'Authorization': f'Bearer {service_key}',
                 },
                 timeout=10,
             )

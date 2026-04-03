@@ -64,7 +64,7 @@ class SupabaseJWTAuthentication(BaseAuthentication):
         if not auth_header.startswith("Bearer "):
             return None
 
-        token = auth_header[7:]
+        token = auth_header[7:].strip()
         payload = self._decode_token(token)
 
         user_id   = self._require_claim(payload, "sub")
