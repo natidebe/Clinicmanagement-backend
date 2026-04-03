@@ -15,7 +15,10 @@ class CurrentUserView(APIView):
     """GET /api/users/me/ — returns the authenticated user's profile."""
 
     def get(self, request):
-        return Response(ProfileSerializer(request.user).data)
+        # request.user is a JWTUser (no DB hit during auth).
+        # This is the one endpoint that explicitly fetches the Profile row.
+        profile = get_object_or_404(Profile, id=request.user.id)
+        return Response(ProfileSerializer(profile).data)
 
 
 class UserListView(APIView):

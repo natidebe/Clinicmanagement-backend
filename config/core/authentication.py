@@ -1,3 +1,5 @@
+import uuid
+
 import jwt
 from jwt import PyJWKClient
 from django.conf import settings
@@ -5,26 +7,56 @@ from rest_framework.authentication import BaseAuthentication
 from rest_framework.exceptions import AuthenticationFailed
 
 # Fetches and caches Supabase's public keys (ES256).
-# Falls back to HS256 with SUPABASE_JWT_SECRET if the JWKS fetch fails.
+# Falls back to HS256 with SUPABASE_JWT_SECRET if SUPABASE_URL is not set.
 _jwks_client = None
 
 
 def _get_jwks_client():
     global _jwks_client
     if _jwks_client is None:
-        from django.conf import settings as s
-        supabase_url = s.SUPABASE_URL
+        supabase_url = settings.SUPABASE_URL
         if supabase_url:
             jwks_url = f"{supabase_url}/auth/v1/.well-known/jwks.json"
             _jwks_client = PyJWKClient(jwks_url, cache_jwk_set=True, lifespan=3600)
     return _jwks_client
 
 
+REQUIRED_ROLES = frozenset({'admin', 'doctor', 'lab_tech', 'receptionist'})
+
+
+class JWTUser:
+    """
+    Lightweight user object built entirely from validated JWT claims.
+    No database query is made during authentication — clinic_id and user_role
+    are trusted from the token, which is signed by Supabase and injected at
+    mint time via the custom_access_token_hook.
+    """
+    is_authenticated = True
+    is_anonymous = False
+
+    def __init__(self, user_id: uuid.UUID, clinic_id: uuid.UUID, role: str):
+        self.id = user_id
+        self.clinic_id = clinic_id
+        self.role = role
+
+    def __str__(self):
+        return f"JWTUser(id={self.id}, clinic={self.clinic_id}, role={self.role})"
+
+
 class SupabaseJWTAuthentication(BaseAuthentication):
     """
-    Validates Supabase-issued JWTs.
-    Supports ES256 (asymmetric, via JWKS) and HS256 (symmetric, via SUPABASE_JWT_SECRET).
-    Sets request.user to the matching Profile instance.
+    Validates Supabase-issued JWTs and enforces required claims.
+
+    Required claims in the token payload:
+      sub        — user UUID (standard JWT subject)
+      clinic_id  — injected by custom_access_token_hook
+      user_role  — injected by custom_access_token_hook
+
+    Supports:
+      ES256 — asymmetric, validated via Supabase JWKS endpoint
+      HS256 — symmetric, validated via SUPABASE_JWT_SECRET
+
+    Sets request.user to a JWTUser instance. No DB query is performed.
     """
 
     def authenticate(self, request):
@@ -33,7 +65,33 @@ class SupabaseJWTAuthentication(BaseAuthentication):
             return None
 
         token = auth_header[7:]
+        payload = self._decode_token(token)
 
+        user_id   = self._require_claim(payload, "sub")
+        clinic_id = self._require_claim(payload, "clinic_id")
+        role      = self._require_claim(payload, "user_role")
+
+        if role not in REQUIRED_ROLES:
+            raise AuthenticationFailed(
+                f"Invalid user_role '{role}'. Must be one of: {', '.join(sorted(REQUIRED_ROLES))}."
+            )
+
+        try:
+            parsed_user_id   = uuid.UUID(user_id)
+            parsed_clinic_id = uuid.UUID(clinic_id)
+        except (ValueError, AttributeError):
+            raise AuthenticationFailed("Token contains malformed UUID in sub or clinic_id.")
+
+        return (JWTUser(parsed_user_id, parsed_clinic_id, role), token)
+
+    def authenticate_header(self, request):
+        return "Bearer"
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _decode_token(self, token: str) -> dict:
         try:
             header = jwt.get_unverified_header(token)
             alg = header.get("alg", "HS256")
@@ -41,21 +99,24 @@ class SupabaseJWTAuthentication(BaseAuthentication):
             if alg == "ES256":
                 client = _get_jwks_client()
                 if client is None:
-                    raise AuthenticationFailed("JWKS client unavailable — SUPABASE_URL is not configured.")
+                    raise AuthenticationFailed(
+                        "JWKS client unavailable — SUPABASE_URL is not configured."
+                    )
                 signing_key = client.get_signing_key_from_jwt(token)
-                payload = jwt.decode(
+                return jwt.decode(
                     token,
                     signing_key.key,
                     algorithms=["ES256"],
                     audience="authenticated",
                 )
             else:
-                payload = jwt.decode(
+                return jwt.decode(
                     token,
                     settings.SUPABASE_JWT_SECRET,
                     algorithms=["HS256"],
                     audience="authenticated",
                 )
+
         except jwt.ExpiredSignatureError:
             raise AuthenticationFailed("Token expired.")
         except jwt.InvalidAudienceError:
@@ -63,18 +124,12 @@ class SupabaseJWTAuthentication(BaseAuthentication):
         except jwt.InvalidTokenError as exc:
             raise AuthenticationFailed(f"Invalid token: {exc}")
 
-        user_id = payload.get("sub")
-        if not user_id:
-            raise AuthenticationFailed("Token missing sub claim.")
-
-        from users.models import Profile
-
-        try:
-            profile = Profile.objects.get(id=user_id)
-        except Profile.DoesNotExist:
-            raise AuthenticationFailed("No profile found for this user.")
-
-        return (profile, token)
-
-    def authenticate_header(self, request):
-        return "Bearer"
+    @staticmethod
+    def _require_claim(payload: dict, claim: str) -> str:
+        value = payload.get(claim)
+        if not value:
+            raise AuthenticationFailed(
+                f"Token is missing required claim: '{claim}'. "
+                "Ensure the Supabase custom_access_token_hook is enabled."
+            )
+        return value
