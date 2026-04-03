@@ -74,6 +74,9 @@ DATABASES = {
         'PASSWORD': require_env('DB_PASSWORD'),
         'HOST': require_env('DB_HOST'),
         'PORT': os.environ.get('DB_PORT', '6543'),
+        'TEST': {
+            'NAME': 'test_clinic_backend',
+        },
     }
 }
 
@@ -114,3 +117,7 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# Use a custom runner that temporarily marks managed=False models as managed
+# so Django can create their tables in the test database.
+TEST_RUNNER = 'tests.runner.UnmanagedModelTestRunner'

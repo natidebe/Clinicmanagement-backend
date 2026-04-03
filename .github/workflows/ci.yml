@@ -22,7 +22,7 @@ jobs:
       DB_PORT: "5432"
       SUPABASE_URL: ""
       SUPABASE_SERVICE_ROLE_KEY: ""
-      SUPABASE_JWT_SECRET: "ci-jwt-secret"
+      SUPABASE_JWT_SECRET: "test-secret-for-tests-only"
 
     services:
       postgres:
