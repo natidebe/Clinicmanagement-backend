@@ -1,0 +1,174 @@
+import uuid
+
+from django.shortcuts import get_object_or_404
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
+
+from .models import Patient, Visit, Consultation
+from .serializers import PatientSerializer, VisitSerializer, ConsultationSerializer
+from users.permissions import HasRole
+
+
+def _parse_uuid(value, field_name):
+    """Return (uuid, None) on success or (None, Response) on invalid format."""
+    try:
+        return uuid.UUID(str(value)), None
+    except (ValueError, AttributeError):
+        return None, Response(
+            {field_name: "Must be a valid UUID."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+
+class PatientListView(APIView):
+    """
+    GET  /api/clinic/patients/        — all authenticated staff, scoped to clinic
+    POST /api/clinic/patients/        — receptionist, admin
+    """
+
+    def get_permissions(self):
+        if self.request.method == 'POST':
+            return [HasRole.for_roles('receptionist', 'admin')()]
+        return super().get_permissions()
+
+    def get(self, request):
+        qs = Patient.objects.filter(clinic_id=request.user.clinic_id)
+        return Response(PatientSerializer(qs, many=True).data)
+
+    def post(self, request):
+        serializer = PatientSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save(clinic_id=request.user.clinic_id)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+class PatientDetailView(APIView):
+    """
+    GET   /api/clinic/patients/<id>/  — all authenticated staff
+    PATCH /api/clinic/patients/<id>/  — receptionist, admin
+    """
+
+    def get_permissions(self):
+        if self.request.method == 'PATCH':
+            return [HasRole.for_roles('receptionist', 'admin')()]
+        return super().get_permissions()
+
+    def _get_object(self, request, patient_id):
+        return get_object_or_404(Patient, id=patient_id, clinic_id=request.user.clinic_id)
+
+    def get(self, request, patient_id):
+        return Response(PatientSerializer(self._get_object(request, patient_id)).data)
+
+    def patch(self, request, patient_id):
+        patient = self._get_object(request, patient_id)
+        serializer = PatientSerializer(patient, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+
+class VisitListView(APIView):
+    """
+    GET  /api/clinic/visits/   — all authenticated staff
+    POST /api/clinic/visits/   — receptionist, admin
+    """
+
+    def get_permissions(self):
+        if self.request.method == 'POST':
+            return [HasRole.for_roles('receptionist', 'admin')()]
+        return super().get_permissions()
+
+    def get(self, request):
+        qs = Visit.objects.filter(clinic_id=request.user.clinic_id)
+        status_filter = request.query_params.get('status')
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+        return Response(VisitSerializer(qs, many=True).data)
+
+    def post(self, request):
+        # Ensure the patient belongs to the same clinic
+        patient_id = request.data.get('patient_id')
+        if patient_id:
+            parsed, err = _parse_uuid(patient_id, 'patient_id')
+            if err:
+                return err
+            get_object_or_404(Patient, id=parsed, clinic_id=request.user.clinic_id)
+
+        serializer = VisitSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save(clinic_id=request.user.clinic_id, created_by=request.user.id)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+class VisitDetailView(APIView):
+    """
+    GET   /api/clinic/visits/<id>/   — all authenticated staff
+    PATCH /api/clinic/visits/<id>/   — receptionist, admin, doctor
+    """
+
+    def get_permissions(self):
+        if self.request.method == 'PATCH':
+            return [HasRole.for_roles('receptionist', 'admin', 'doctor')()]
+        return super().get_permissions()
+
+    def _get_object(self, request, visit_id):
+        return get_object_or_404(Visit, id=visit_id, clinic_id=request.user.clinic_id)
+
+    def get(self, request, visit_id):
+        return Response(VisitSerializer(self._get_object(request, visit_id)).data)
+
+    def patch(self, request, visit_id):
+        visit = self._get_object(request, visit_id)
+        serializer = VisitSerializer(visit, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+
+class ConsultationListView(APIView):
+    """
+    GET  /api/clinic/consultations/   — all authenticated staff
+    POST /api/clinic/consultations/   — doctor
+    """
+
+    def get_permissions(self):
+        if self.request.method == 'POST':
+            return [HasRole.for_roles('doctor')()]
+        return super().get_permissions()
+
+    def get(self, request):
+        visit_ids = Visit.objects.filter(
+            clinic_id=request.user.clinic_id
+        ).values_list('id', flat=True)
+        qs = Consultation.objects.filter(visit_id__in=visit_ids)
+        visit_id = request.query_params.get('visit_id')
+        if visit_id:
+            qs = qs.filter(visit_id=visit_id)
+        return Response(ConsultationSerializer(qs, many=True).data)
+
+    def post(self, request):
+        visit_id = request.data.get('visit_id')
+        if visit_id:
+            parsed, err = _parse_uuid(visit_id, 'visit_id')
+            if err:
+                return err
+            get_object_or_404(Visit, id=parsed, clinic_id=request.user.clinic_id)
+
+        serializer = ConsultationSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save(doctor_id=request.user.id)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+class ConsultationDetailView(APIView):
+    """
+    GET /api/clinic/consultations/<id>/  — all authenticated staff
+    """
+
+    def get(self, request, consultation_id):
+        visit_ids = Visit.objects.filter(
+            clinic_id=request.user.clinic_id
+        ).values_list('id', flat=True)
+        consultation = get_object_or_404(Consultation, id=consultation_id, visit_id__in=visit_ids)
+        return Response(ConsultationSerializer(consultation).data)
