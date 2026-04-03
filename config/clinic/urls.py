@@ -6,6 +6,8 @@ from .views import (
     VisitDetailView,
     ConsultationListView,
     ConsultationDetailView,
+    PrescriptionListView,
+    PrescriptionDetailView,
 )
 
 urlpatterns = [
@@ -15,4 +17,6 @@ urlpatterns = [
     path('visits/<uuid:visit_id>/', VisitDetailView.as_view(), name='visit-detail'),
     path('consultations/', ConsultationListView.as_view(), name='consultation-list'),
     path('consultations/<uuid:consultation_id>/', ConsultationDetailView.as_view(), name='consultation-detail'),
+    path('prescriptions/', PrescriptionListView.as_view(), name='prescription-list'),
+    path('prescriptions/<uuid:prescription_id>/', PrescriptionDetailView.as_view(), name='prescription-detail'),
 ]

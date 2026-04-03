@@ -31,11 +31,13 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
         'write_visit',           # create visits
         'update_visit',          # update visit status / assigned doctor
         'process_lab_order',     # update lab order status, assign technician
+        'view_audit_log',        # read audit trail for the clinic
     ],
     'doctor': [
         'update_visit',          # update visit status / assigned doctor
         'write_consultation',    # create consultations
         'order_lab_test',        # create lab test orders
+        'write_prescription',    # create prescriptions
     ],
     'lab_tech': [
         'process_lab_order',     # update lab order status, assign technician

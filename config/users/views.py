@@ -9,6 +9,7 @@ from .models import Profile
 from .serializers import ProfileSerializer, AssignRoleSerializer, UpdateProfileSerializer, CreateUserSerializer
 from .permissions import HasPermission, IsAdminOrSelf
 from core.querysets import PaginatedListMixin
+from audit.mixins import AuditLogMixin
 
 
 class CurrentUserView(APIView):
@@ -21,7 +22,7 @@ class CurrentUserView(APIView):
         return Response(ProfileSerializer(profile).data)
 
 
-class UserListView(PaginatedListMixin, APIView):
+class UserListView(AuditLogMixin, PaginatedListMixin, APIView):
     """
     GET  /api/users/?role=<role>  — admin only, scoped to clinic
     POST /api/users/              — admin only, creates auth user + profile
@@ -90,10 +91,11 @@ class UserListView(PaginatedListMixin, APIView):
             )
             raise db_exc
 
+        self.log_action(request, 'create', 'user', profile.id)
         return Response(ProfileSerializer(profile).data, status=status.HTTP_201_CREATED)
 
 
-class AssignRoleView(APIView):
+class AssignRoleView(AuditLogMixin, APIView):
     """
     PATCH /api/users/<user_id>/role/
     Admin only. Scoped to the admin's clinic to prevent cross-clinic role assignment.
@@ -108,10 +110,11 @@ class AssignRoleView(APIView):
         serializer.is_valid(raise_exception=True)
         profile.role = serializer.validated_data['role']
         profile.save(update_fields=['role'])
+        self.log_action(request, 'update', 'user', profile.id)
         return Response(ProfileSerializer(profile).data)
 
 
-class UpdateUserView(APIView):
+class UpdateUserView(AuditLogMixin, APIView):
     """
     PATCH /api/users/<user_id>/
     Admins can update any user in their clinic; users can only update themselves.
@@ -126,4 +129,5 @@ class UpdateUserView(APIView):
         serializer = UpdateProfileSerializer(profile, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         serializer.save()
+        self.log_action(request, 'update', 'user', profile.id)
         return Response(ProfileSerializer(serializer.instance).data)

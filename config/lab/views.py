@@ -15,6 +15,7 @@ from .serializers import (
 from clinic.models import Visit
 from users.permissions import HasPermission
 from core.querysets import PaginatedListMixin
+from audit.mixins import AuditLogMixin
 
 
 def _parse_uuid(value, field_name):
@@ -28,7 +29,7 @@ def _parse_uuid(value, field_name):
         )
 
 
-class LabTestListView(PaginatedListMixin, APIView):
+class LabTestListView(AuditLogMixin, PaginatedListMixin, APIView):
     """
     GET  /api/lab/tests/   — all authenticated staff (active tests only for non-admins)
     POST /api/lab/tests/   — admin
@@ -49,10 +50,11 @@ class LabTestListView(PaginatedListMixin, APIView):
         serializer = LabTestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         serializer.save(clinic_id=request.user.clinic_id, created_by=request.user.id)
+        self.log_action(request, 'create', 'lab_test', serializer.instance.id)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
-class LabTestDetailView(APIView):
+class LabTestDetailView(AuditLogMixin, APIView):
     """
     GET   /api/lab/tests/<id>/   — all authenticated staff
     PATCH /api/lab/tests/<id>/   — admin
@@ -74,10 +76,11 @@ class LabTestDetailView(APIView):
         serializer = LabTestSerializer(lab_test, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         serializer.save()
+        self.log_action(request, 'update', 'lab_test', lab_test.id)
         return Response(serializer.data)
 
 
-class TestOrderListView(PaginatedListMixin, APIView):
+class TestOrderListView(AuditLogMixin, PaginatedListMixin, APIView):
     """
     GET  /api/lab/orders/   — all authenticated staff
     POST /api/lab/orders/   — doctor
@@ -120,10 +123,11 @@ class TestOrderListView(PaginatedListMixin, APIView):
         serializer = TestOrderSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         serializer.save(ordered_by=request.user.id)
+        self.log_action(request, 'create', 'test_order', serializer.instance.id)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
-class TestOrderDetailView(APIView):
+class TestOrderDetailView(AuditLogMixin, APIView):
     """
     GET   /api/lab/orders/<id>/   — all authenticated staff
     PATCH /api/lab/orders/<id>/   — lab_tech, admin
@@ -148,10 +152,11 @@ class TestOrderDetailView(APIView):
         for field, value in serializer.validated_data.items():
             setattr(order, field, value)
         order.save(update_fields=list(serializer.validated_data.keys()))
+        self.log_action(request, 'update', 'test_order', order.id)
         return Response(TestOrderSerializer(order).data)
 
 
-class TestResultListView(PaginatedListMixin, APIView):
+class TestResultListView(AuditLogMixin, PaginatedListMixin, APIView):
     """
     GET  /api/lab/results/   — all authenticated staff
     POST /api/lab/results/   — lab_tech
@@ -185,6 +190,7 @@ class TestResultListView(PaginatedListMixin, APIView):
         serializer = TestResultSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         serializer.save(technician_id=request.user.id)
+        self.log_action(request, 'create', 'test_result', serializer.instance.id)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 

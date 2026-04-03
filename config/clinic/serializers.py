@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Patient, Visit, Consultation
+from .models import Patient, Visit, Consultation, Prescription, PrescriptionItem
 
 
 class PatientSerializer(serializers.ModelSerializer):
@@ -21,3 +21,31 @@ class ConsultationSerializer(serializers.ModelSerializer):
         model = Consultation
         fields = ['id', 'visit_id', 'doctor_id', 'symptoms', 'diagnosis', 'notes', 'created_at']
         read_only_fields = ['id', 'doctor_id', 'created_at']
+
+
+class PrescriptionItemSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PrescriptionItem
+        fields = ['id', 'medication', 'dosage', 'frequency', 'duration', 'instructions', 'created_at']
+        read_only_fields = ['id', 'created_at']
+
+
+class PrescriptionSerializer(serializers.ModelSerializer):
+    items = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Prescription
+        fields = ['id', 'consultation_id', 'prescribed_by', 'notes', 'items', 'created_at']
+        read_only_fields = ['id', 'prescribed_by', 'items', 'created_at']
+
+    def get_items(self, obj):
+        return PrescriptionItemSerializer(
+            PrescriptionItem.objects.filter(prescription_id=obj.id),
+            many=True,
+        ).data
+
+
+class PrescriptionCreateSerializer(serializers.Serializer):
+    consultation_id = serializers.UUIDField()
+    notes = serializers.CharField(required=False, allow_blank=True, default='')
+    items = PrescriptionItemSerializer(many=True, min_length=1)

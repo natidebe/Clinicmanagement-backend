@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 import jwt as pyjwt
 from rest_framework.test import APIClient
 
-from clinic.models import Patient, Visit, Consultation
+from clinic.models import Patient, Visit, Consultation, Prescription, PrescriptionItem
 from core.authentication import JWTUser
 from lab.models import LabTest, TestOrder, TestResult
 from users.models import Profile
@@ -126,3 +126,18 @@ def make_test_order(visit, lab_test, ordered_by):
         ordered_by=ordered_by.id,
         status='pending',
     )
+
+
+def make_prescription(consultation, prescribed_by, notes=''):
+    prescription = Prescription.objects.create(
+        consultation_id=consultation.id,
+        prescribed_by=prescribed_by.id,
+        notes=notes,
+    )
+    PrescriptionItem.objects.create(
+        prescription_id=prescription.id,
+        medication='Paracetamol',
+        dosage='500mg',
+        frequency='3x daily',
+    )
+    return prescription

@@ -52,3 +52,27 @@ class Consultation(BaseModel):
     class Meta:
         db_table = "consultations"
         managed = False
+
+
+class Prescription(BaseModel):
+    consultation_id = models.UUIDField()
+    prescribed_by = models.UUIDField()
+    notes = models.TextField(blank=True, null=True)
+
+    class Meta:
+        db_table = "prescriptions"
+        managed = False
+        ordering = ['-created_at']
+
+
+class PrescriptionItem(BaseModel):
+    prescription_id = models.UUIDField()
+    medication = models.TextField()
+    dosage = models.TextField()
+    frequency = models.TextField()
+    duration = models.TextField(blank=True, null=True)
+    instructions = models.TextField(blank=True, null=True)
+
+    class Meta:
+        db_table = "prescription_items"
+        managed = False

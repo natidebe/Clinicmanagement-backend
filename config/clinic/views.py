@@ -5,10 +5,14 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 
-from .models import Patient, Visit, Consultation
-from .serializers import PatientSerializer, VisitSerializer, ConsultationSerializer
+from .models import Patient, Visit, Consultation, Prescription, PrescriptionItem
+from .serializers import (
+    PatientSerializer, VisitSerializer, ConsultationSerializer,
+    PrescriptionSerializer, PrescriptionCreateSerializer, PrescriptionItemSerializer,
+)
 from users.permissions import HasPermission
 from core.querysets import PaginatedListMixin
+from audit.mixins import AuditLogMixin
 
 
 def _parse_uuid(value, field_name):
@@ -22,7 +26,7 @@ def _parse_uuid(value, field_name):
         )
 
 
-class PatientListView(PaginatedListMixin, APIView):
+class PatientListView(AuditLogMixin, PaginatedListMixin, APIView):
     """
     GET  /api/clinic/patients/        — all authenticated staff, scoped to clinic
     POST /api/clinic/patients/        — receptionist, admin
@@ -41,10 +45,11 @@ class PatientListView(PaginatedListMixin, APIView):
         serializer = PatientSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         serializer.save(clinic_id=request.user.clinic_id)
+        self.log_action(request, 'create', 'patient', serializer.instance.id)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
-class PatientDetailView(APIView):
+class PatientDetailView(AuditLogMixin, APIView):
     """
     GET   /api/clinic/patients/<id>/  — all authenticated staff
     PATCH /api/clinic/patients/<id>/  — receptionist, admin
@@ -66,10 +71,11 @@ class PatientDetailView(APIView):
         serializer = PatientSerializer(patient, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         serializer.save()
+        self.log_action(request, 'update', 'patient', patient.id)
         return Response(serializer.data)
 
 
-class VisitListView(PaginatedListMixin, APIView):
+class VisitListView(AuditLogMixin, PaginatedListMixin, APIView):
     """
     GET  /api/clinic/visits/   — all authenticated staff
     POST /api/clinic/visits/   — receptionist, admin
@@ -99,10 +105,11 @@ class VisitListView(PaginatedListMixin, APIView):
         serializer = VisitSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         serializer.save(clinic_id=request.user.clinic_id, created_by=request.user.id)
+        self.log_action(request, 'create', 'visit', serializer.instance.id)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
-class VisitDetailView(APIView):
+class VisitDetailView(AuditLogMixin, APIView):
     """
     GET   /api/clinic/visits/<id>/   — all authenticated staff
     PATCH /api/clinic/visits/<id>/   — receptionist, admin, doctor
@@ -124,10 +131,11 @@ class VisitDetailView(APIView):
         serializer = VisitSerializer(visit, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         serializer.save()
+        self.log_action(request, 'update', 'visit', visit.id)
         return Response(serializer.data)
 
 
-class ConsultationListView(PaginatedListMixin, APIView):
+class ConsultationListView(AuditLogMixin, PaginatedListMixin, APIView):
     """
     GET  /api/clinic/consultations/   — all authenticated staff
     POST /api/clinic/consultations/   — doctor
@@ -158,6 +166,7 @@ class ConsultationListView(PaginatedListMixin, APIView):
         serializer = ConsultationSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         serializer.save(doctor_id=request.user.id)
+        self.log_action(request, 'create', 'consultation', serializer.instance.id)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
@@ -170,3 +179,58 @@ class ConsultationDetailView(APIView):
         visit_ids = Visit.objects.for_clinic(request.user.clinic_id).values_list('id', flat=True)
         consultation = get_object_or_404(Consultation, id=consultation_id, visit_id__in=visit_ids)
         return Response(ConsultationSerializer(consultation).data)
+
+
+class PrescriptionListView(AuditLogMixin, PaginatedListMixin, APIView):
+    """
+    GET  /api/clinic/prescriptions/              — all authenticated staff, scoped to clinic
+    POST /api/clinic/prescriptions/              — doctor only
+    """
+
+    def get_permissions(self):
+        if self.request.method == 'POST':
+            return [HasPermission.for_permission('write_prescription')()]
+        return super().get_permissions()
+
+    def _clinic_consultation_ids(self, request):
+        visit_ids = Visit.objects.for_clinic(request.user.clinic_id).values_list('id', flat=True)
+        return Consultation.objects.filter(visit_id__in=visit_ids).values_list('id', flat=True)
+
+    def get(self, request):
+        consultation_id = request.query_params.get('consultation_id')
+        qs = Prescription.objects.filter(consultation_id__in=self._clinic_consultation_ids(request))
+        if consultation_id:
+            qs = qs.filter(consultation_id=consultation_id)
+        return self.paginate(qs, PrescriptionSerializer, request)
+
+    def post(self, request):
+        serializer = PrescriptionCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        consultation_id = data['consultation_id']
+        visit_ids = Visit.objects.for_clinic(request.user.clinic_id).values_list('id', flat=True)
+        get_object_or_404(Consultation, id=consultation_id, visit_id__in=visit_ids)
+
+        prescription = Prescription.objects.create(
+            consultation_id=consultation_id,
+            prescribed_by=request.user.id,
+            notes=data.get('notes', ''),
+        )
+        for item in data['items']:
+            PrescriptionItem.objects.create(prescription_id=prescription.id, **item)
+
+        self.log_action(request, 'create', 'prescription', prescription.id)
+        return Response(PrescriptionSerializer(prescription).data, status=status.HTTP_201_CREATED)
+
+
+class PrescriptionDetailView(APIView):
+    """
+    GET /api/clinic/prescriptions/<id>/  — all authenticated staff
+    """
+
+    def get(self, request, prescription_id):
+        visit_ids = Visit.objects.for_clinic(request.user.clinic_id).values_list('id', flat=True)
+        consultation_ids = Consultation.objects.filter(visit_id__in=visit_ids).values_list('id', flat=True)
+        prescription = get_object_or_404(Prescription, id=prescription_id, consultation_id__in=consultation_ids)
+        return Response(PrescriptionSerializer(prescription).data)

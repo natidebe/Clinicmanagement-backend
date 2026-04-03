@@ -106,3 +106,25 @@ CREATE TABLE public.visits (
   CONSTRAINT visits_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.profiles(id),
   CONSTRAINT visits_assigned_doctor_id_fkey FOREIGN KEY (assigned_doctor_id) REFERENCES public.profiles(id)
 );
+CREATE TABLE public.prescriptions (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  consultation_id uuid,
+  prescribed_by uuid,
+  notes text,
+  created_at timestamp without time zone DEFAULT now(),
+  CONSTRAINT prescriptions_pkey PRIMARY KEY (id),
+  CONSTRAINT prescriptions_consultation_id_fkey FOREIGN KEY (consultation_id) REFERENCES public.consultations(id),
+  CONSTRAINT prescriptions_prescribed_by_fkey FOREIGN KEY (prescribed_by) REFERENCES public.profiles(id)
+);
+CREATE TABLE public.prescription_items (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  prescription_id uuid NOT NULL,
+  medication text NOT NULL,
+  dosage text NOT NULL,
+  frequency text NOT NULL,
+  duration text,
+  instructions text,
+  created_at timestamp without time zone DEFAULT now(),
+  CONSTRAINT prescription_items_pkey PRIMARY KEY (id),
+  CONSTRAINT prescription_items_prescription_id_fkey FOREIGN KEY (prescription_id) REFERENCES public.prescriptions(id)
+);
