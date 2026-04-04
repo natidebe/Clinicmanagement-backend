@@ -1,4 +1,5 @@
 import os
+import sys
 from pathlib import Path
 from dotenv import load_dotenv
 from django.core.exceptions import ImproperlyConfigured
@@ -35,6 +36,9 @@ INSTALLED_APPS = [
     'clinic',
     'lab',
     'audit',
+    'billing',
+    'patient_flow',
+    'notifications',
 ]
 
 MIDDLEWARE = [
@@ -67,14 +71,16 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'config.wsgi.application'
 
+_testing = 'test' in sys.argv
+
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': os.environ.get('DB_NAME', 'postgres'),
-        'USER': require_env('DB_USER'),
-        'PASSWORD': require_env('DB_PASSWORD'),
-        'HOST': require_env('DB_HOST'),
-        'PORT': os.environ.get('DB_PORT', '6543'),
+        'NAME': 'test_clinic_backend' if _testing else os.environ.get('DB_NAME', 'postgres'),
+        'USER': 'postgres' if _testing else require_env('DB_USER'),
+        'PASSWORD': 'testpass123' if _testing else require_env('DB_PASSWORD'),
+        'HOST': 'localhost' if _testing else require_env('DB_HOST'),
+        'PORT': '15432' if _testing else os.environ.get('DB_PORT', '6543'),
         'TEST': {
             'NAME': 'test_clinic_backend',
         },
@@ -111,6 +117,10 @@ if not SUPABASE_JWT_SECRET and not DEBUG:
 CORS_ALLOW_ALL_ORIGINS = DEBUG
 CORS_ALLOWED_ORIGINS = os.environ.get('CORS_ALLOWED_ORIGINS', '').split(',') if os.environ.get('CORS_ALLOWED_ORIGINS') else []
 
+# Queue / patient flow settings (override via environment variables)
+QUEUE_GRACE_PERIOD_MINUTES = int(os.environ.get('QUEUE_GRACE_PERIOD_MINUTES', 15))
+QUEUE_CALL_TIMEOUT_MINUTES = int(os.environ.get('QUEUE_CALL_TIMEOUT_MINUTES', 5))
+
 LANGUAGE_CODE = 'en-us'
 TIME_ZONE = 'UTC'
 USE_I18N = True
@@ -122,3 +132,10 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # Use a custom runner that temporarily marks managed=False models as managed
 # so Django can create their tables in the test database.
 TEST_RUNNER = 'tests.runner.UnmanagedModelTestRunner'
+
+# ---------------------------------------------------------------------------
+# Celery
+# ---------------------------------------------------------------------------
+CELERY_BROKER_URL        = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+CELERY_RESULT_BACKEND    = os.environ.get('REDIS_URL', 'redis://localhost:6379/0')
+CELERY_TASK_ALWAYS_EAGER = _testing   # run tasks synchronously during tests
