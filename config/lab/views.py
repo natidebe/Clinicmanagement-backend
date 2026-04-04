@@ -16,6 +16,7 @@ from clinic.models import Visit
 from users.permissions import HasPermission
 from core.querysets import PaginatedListMixin
 from audit.mixins import AuditLogMixin
+from core.events import emit_lab_event, EVENT_LAB_TEST_REQUESTED, STATUS_TO_EVENT
 
 
 def _parse_uuid(value, field_name):
@@ -103,6 +104,12 @@ class TestOrderListView(AuditLogMixin, PaginatedListMixin, APIView):
         status_filter = request.query_params.get('status')
         if status_filter:
             qs = qs.filter(status=status_filter)
+        # ?unbilled=true  — orders not yet on any finalized invoice
+        if request.query_params.get('unbilled') == 'true':
+            qs = qs.filter(billed_invoice_id__isnull=True)
+        # ?billable=true  — completed, billable, not yet invoiced (ready-to-bill shortcut)
+        if request.query_params.get('billable') == 'true':
+            qs = qs.filter(is_billable=True, status='completed', billed_invoice_id__isnull=True)
         return self.paginate(qs, TestOrderSerializer, request)
 
     def post(self, request):
@@ -113,17 +120,30 @@ class TestOrderListView(AuditLogMixin, PaginatedListMixin, APIView):
                 return err
             get_object_or_404(Visit.objects.for_clinic(request.user.clinic_id), id=parsed)
 
+        lab_test = None
         test_id = request.data.get('test_id')
         if test_id:
             parsed, err = _parse_uuid(test_id, 'test_id')
             if err:
                 return err
-            get_object_or_404(LabTest.objects.for_clinic(request.user.clinic_id), id=parsed, is_active=True)
+            lab_test = get_object_or_404(
+                LabTest.objects.for_clinic(request.user.clinic_id), id=parsed, is_active=True
+            )
 
         serializer = TestOrderSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        serializer.save(ordered_by=request.user.id)
+        save_kwargs = {'ordered_by': request.user.id}
+        if lab_test:
+            save_kwargs['price_at_order_time'] = lab_test.price
+        serializer.save(**save_kwargs)
         self.log_action(request, 'create', 'test_order', serializer.instance.id)
+        emit_lab_event(
+            event_type=EVENT_LAB_TEST_REQUESTED,
+            test_order=serializer.instance,
+            clinic_id=request.user.clinic_id,
+            triggered_by_id=request.user.id,
+            test_name=lab_test.name if lab_test else '',
+        )
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
@@ -153,6 +173,14 @@ class TestOrderDetailView(AuditLogMixin, APIView):
             setattr(order, field, value)
         order.save(update_fields=list(serializer.validated_data.keys()))
         self.log_action(request, 'update', 'test_order', order.id)
+        event_type = STATUS_TO_EVENT.get(order.status)
+        if event_type:
+            emit_lab_event(
+                event_type=event_type,
+                test_order=order,
+                clinic_id=request.user.clinic_id,
+                triggered_by_id=request.user.id,
+            )
         return Response(TestOrderSerializer(order).data)
 
 
