@@ -72,15 +72,37 @@ TEMPLATES = [
 WSGI_APPLICATION = 'config.wsgi.application'
 
 _testing = 'test' in sys.argv
+_ci      = os.environ.get('CI', 'false').lower() == 'true'
+
+if _testing and _ci:
+    # GitHub Actions: Postgres service is on localhost:5432
+    _db_name     = os.environ.get('DB_NAME', 'postgres')
+    _db_user     = os.environ.get('DB_USER', 'postgres')
+    _db_password = os.environ.get('DB_PASSWORD', 'postgres')
+    _db_host     = os.environ.get('DB_HOST', 'localhost')
+    _db_port     = os.environ.get('DB_PORT', '5432')
+elif _testing:
+    # Local: Docker container on localhost:15432
+    _db_name     = 'test_clinic_backend'
+    _db_user     = 'postgres'
+    _db_password = 'testpass123'
+    _db_host     = 'localhost'
+    _db_port     = '15432'
+else:
+    _db_name     = os.environ.get('DB_NAME', 'postgres')
+    _db_user     = require_env('DB_USER')
+    _db_password = require_env('DB_PASSWORD')
+    _db_host     = require_env('DB_HOST')
+    _db_port     = os.environ.get('DB_PORT', '6543')
 
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'test_clinic_backend' if _testing else os.environ.get('DB_NAME', 'postgres'),
-        'USER': 'postgres' if _testing else require_env('DB_USER'),
-        'PASSWORD': 'testpass123' if _testing else require_env('DB_PASSWORD'),
-        'HOST': 'localhost' if _testing else require_env('DB_HOST'),
-        'PORT': '15432' if _testing else os.environ.get('DB_PORT', '6543'),
+        'NAME': _db_name,
+        'USER': _db_user,
+        'PASSWORD': _db_password,
+        'HOST': _db_host,
+        'PORT': _db_port,
         'TEST': {
             'NAME': 'test_clinic_backend',
         },
