@@ -40,6 +40,7 @@ class JWTUser:
 
     def __init__(self, user_id: uuid.UUID, clinic_id, role: str):
         self.id = user_id
+        self.pk = user_id            # required by DRF UserRateThrottle
         self.clinic_id = clinic_id   # None for super_admin
         self.role = role
 

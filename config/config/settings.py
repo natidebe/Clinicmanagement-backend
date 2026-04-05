@@ -125,6 +125,21 @@ REST_FRAMEWORK = {
         'rest_framework.permissions.IsAuthenticated',
     ],
     'EXCEPTION_HANDLER': 'rest_framework.views.exception_handler',
+    # ---------------------------------------------------------------------------
+    # Rate limiting
+    # Authenticated staff: 300 requests/minute (plenty for normal clinic use)
+    # Unauthenticated (webhook, health checks): 60 requests/minute
+    # Webhook endpoint overrides this with a tighter scope in the view itself.
+    # ---------------------------------------------------------------------------
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'anon':    '60/minute',
+        'user':    '300/minute',
+        'webhook': '30/minute',
+    },
 }
 
 # Required in production; in DEBUG mode the server still starts so you can test other things,

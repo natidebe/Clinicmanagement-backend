@@ -17,6 +17,20 @@ PaginatedListMixin
 from django.db import models
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
+from rest_framework.throttling import AnonRateThrottle
+
+
+# ---------------------------------------------------------------------------
+# Custom throttle scopes
+# ---------------------------------------------------------------------------
+
+class WebhookThrottle(AnonRateThrottle):
+    """
+    Tighter throttle for webhook endpoints.
+    Chapa sends at most a handful of events per payment — 30/minute is generous.
+    Blocks flood attacks on the unauthenticated webhook endpoint.
+    """
+    scope = 'webhook'
 
 
 # ---------------------------------------------------------------------------

@@ -31,7 +31,7 @@ from .services import (
 from clinic.models import Visit
 from lab.models import LabTest, TestOrder
 from users.permissions import HasPermission
-from core.querysets import PaginatedListMixin
+from core.querysets import PaginatedListMixin, WebhookThrottle
 from audit.mixins import AuditLogMixin
 
 logger = logging.getLogger(__name__)
@@ -359,7 +359,8 @@ class ChapaWebhookView(APIView):
     - Must return HTTP 200 or Chapa retries every 10 min for 72 hours.
     """
     authentication_classes = []
-    permission_classes      = [AllowAny]
+    permission_classes     = [AllowAny]
+    throttle_classes       = [WebhookThrottle]
 
     def post(self, request):
         # Verify signature
