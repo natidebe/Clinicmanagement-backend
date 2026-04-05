@@ -148,7 +148,7 @@ def initiate_payment(invoice, initiated_by_id, callback_url: str = '', return_ur
             raise BillingError('This invoice has already been paid.')
         raise BillingError('A payment is already pending for this invoice.')
 
-    tx_ref = f'clinic-{invoice.id}-{uuid.uuid4().hex[:8]}'
+    tx_ref = f'clinic-{invoice.id.hex}-{uuid.uuid4().hex[:4]}'
 
     payment = Payment.objects.create(
         clinic_id=invoice.clinic_id,
