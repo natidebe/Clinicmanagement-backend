@@ -4,6 +4,7 @@ from django.conf import settings
 from django.db import transaction
 from django.db.models import F, Max
 from django.shortcuts import get_object_or_404
+
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.response import Response
@@ -17,6 +18,11 @@ from users.permissions import HasPermission
 from .models import (
     Appointment, QueueEntry, QueueStateAudit,
     VALID_TRANSITIONS, transition,
+)
+from .services import (
+    QueueError, move_to_waiting, compact_waiting_positions,
+    call_patient, mark_no_show, reinsert_patient,
+    start_visit, complete_visit,
 )
 from .serializers import (
     AppointmentSerializer, CreateAppointmentSerializer,
@@ -40,61 +46,6 @@ def _get_queue_entry(clinic_id, entry_id, required_status=None):
     return get_object_or_404(qs, id=entry_id)
 
 
-def _move_to_waiting(entry: QueueEntry, changed_by_id, is_late: bool) -> None:
-    """
-    Assign queue_position and transition entry checked_in → waiting.
-    Must be called inside a transaction.atomic() block.
-
-    Priority rule (configurable per clinic — currently hardcoded):
-      - On-time appointment patients are inserted after other appointment
-        entries, before any walk-in entries.
-      - Late appointment patients and walk-ins are appended to the end.
-    """
-    clinic_id = entry.clinic_id
-    waiting_qs = QueueEntry.objects.for_clinic(clinic_id).filter(
-        status='waiting'
-    ).select_for_update()
-
-    if not is_late and entry.entry_type == 'appointment':
-        last_appt_pos = waiting_qs.filter(entry_type='appointment').aggregate(
-            m=Max('queue_position')
-        )['m']
-
-        if last_appt_pos is None:
-            # No appointment entries in queue yet — insert at position 1,
-            # push all existing walk-ins down.
-            if waiting_qs.exists():
-                waiting_qs.update(queue_position=F('queue_position') + 1)
-            entry.queue_position = 1
-        else:
-            insert_at = last_appt_pos + 1
-            waiting_qs.filter(queue_position__gte=insert_at).update(
-                queue_position=F('queue_position') + 1
-            )
-            entry.queue_position = insert_at
-    else:
-        # Walk-in or late appointment: append to end
-        max_pos = waiting_qs.aggregate(m=Max('queue_position'))['m'] or 0
-        entry.queue_position = max_pos + 1
-
-    transition(
-        entry, 'waiting',
-        changed_by=changed_by_id,
-        reason='auto_queued',
-        metadata={'queue_position': entry.queue_position, 'is_late': is_late},
-    )
-
-
-def _compact_waiting_positions(clinic_id, after_position: int) -> None:
-    """
-    Shift all waiting entries with queue_position > after_position down by 1.
-    Called after a patient is called or removed from the waiting list.
-    Must be called inside transaction.atomic().
-    """
-    QueueEntry.objects.for_clinic(clinic_id).filter(
-        status='waiting',
-        queue_position__gt=after_position,
-    ).update(queue_position=F('queue_position') - 1)
 
 
 # ---------------------------------------------------------------------------
@@ -339,7 +290,7 @@ class CheckInView(AuditLogMixin, APIView):
                     'appointment_id': str(appointment_id) if appointment_id else None,
                 },
             )
-            _move_to_waiting(entry, request.user.id, is_late)
+            move_to_waiting(entry, request.user.id, is_late)
 
         self.log_action(request, 'create', 'queue_entry', entry.id)
         return Response(QueueEntrySerializer(entry).data, status=status.HTTP_201_CREATED)
@@ -372,19 +323,7 @@ class QueueCallView(AuditLogMixin, APIView):
 
     def post(self, request, entry_id):
         entry = _get_queue_entry(request.user.clinic_id, entry_id, required_status='waiting')
-
-        with transaction.atomic():
-            old_position = entry.queue_position
-            entry.queue_position = None  # cleared before transition saves
-            transition(
-                entry, 'called',
-                changed_by=request.user.id,
-                reason='staff_called',
-                metadata={'previous_queue_position': old_position},
-            )
-            if old_position is not None:
-                _compact_waiting_positions(request.user.clinic_id, old_position)
-
+        call_patient(entry, request.user.id)
         self.log_action(request, 'update', 'queue_entry', entry.id)
         return Response(QueueEntrySerializer(entry).data)
 
@@ -402,18 +341,7 @@ class QueueNoShowView(AuditLogMixin, APIView):
         )
         ser = NoShowSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
-
-        with transaction.atomic():
-            old_position = entry.queue_position
-            entry.queue_position = None
-            transition(
-                entry, 'no_show',
-                changed_by=request.user.id,
-                reason=ser.validated_data['reason'],
-            )
-            if old_position is not None:
-                _compact_waiting_positions(request.user.clinic_id, old_position)
-
+        mark_no_show(entry, request.user.id, ser.validated_data['reason'])
         self.log_action(request, 'update', 'queue_entry', entry.id)
         return Response(QueueEntrySerializer(entry).data)
 
@@ -424,23 +352,9 @@ class QueueReinsertView(AuditLogMixin, APIView):
 
     def post(self, request, entry_id):
         entry = _get_queue_entry(request.user.clinic_id, entry_id, required_status='no_show')
-
         ser = ReinsertSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
-
-        with transaction.atomic():
-            waiting_qs = QueueEntry.objects.for_clinic(request.user.clinic_id).filter(
-                status='waiting'
-            ).select_for_update()
-            max_pos = waiting_qs.aggregate(m=Max('queue_position'))['m'] or 0
-            entry.queue_position = max_pos + 1
-            transition(
-                entry, 'waiting',
-                changed_by=request.user.id,
-                reason=ser.validated_data['reason'],
-                metadata={'queue_position': entry.queue_position},
-            )
-
+        reinsert_patient(entry, request.user.id, ser.validated_data['reason'])
         self.log_action(request, 'update', 'queue_entry', entry.id)
         return Response(QueueEntrySerializer(entry).data)
 
@@ -451,23 +365,7 @@ class QueueStartVisitView(AuditLogMixin, APIView):
 
     def post(self, request, entry_id):
         entry = _get_queue_entry(request.user.clinic_id, entry_id, required_status='called')
-
-        with transaction.atomic():
-            visit = Visit.objects.create(
-                clinic_id=request.user.clinic_id,
-                patient_id=entry.patient_id,
-                created_by=request.user.id,
-                assigned_doctor_id=entry.assigned_doctor_id or request.user.id,
-                status='in_progress',
-            )
-            entry.visit_id = visit.id
-            transition(
-                entry, 'in_progress',
-                changed_by=request.user.id,
-                reason='visit_started',
-                metadata={'visit_id': str(visit.id)},
-            )
-
+        entry, visit = start_visit(entry, request.user.clinic_id, request.user.id)
         self.log_action(request, 'create', 'visit', visit.id)
         return Response({
             'queue_entry': QueueEntrySerializer(entry).data,
@@ -481,18 +379,7 @@ class QueueCompleteView(AuditLogMixin, APIView):
 
     def post(self, request, entry_id):
         entry = _get_queue_entry(request.user.clinic_id, entry_id, required_status='in_progress')
-
-        with transaction.atomic():
-            transition(
-                entry, 'completed',
-                changed_by=request.user.id,
-                reason='visit_completed',
-            )
-            if entry.visit_id:
-                Visit.objects.for_clinic(request.user.clinic_id).filter(
-                    id=entry.visit_id
-                ).update(status='completed')
-
+        complete_visit(entry, request.user.clinic_id, request.user.id)
         self.log_action(request, 'update', 'queue_entry', entry.id)
         return Response(QueueEntrySerializer(entry).data)
 

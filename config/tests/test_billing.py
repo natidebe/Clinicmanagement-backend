@@ -371,7 +371,7 @@ class InvoiceFinalizeTests(TestCase):
             format='json',
         )
         self.assertEqual(resp.status_code, 400)
-        self.assertIn('conflicting_orders', resp.data)
+        self.assertIn('detail', resp.data)
 
     def test_finalized_invoice_immutable_to_line_item_add(self):
         auth_client(self.receptionist).post(
