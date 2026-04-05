@@ -15,7 +15,7 @@ Covers:
 import uuid
 from unittest.mock import patch, MagicMock
 
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
 from core.authentication import JWTUser
@@ -137,6 +137,7 @@ class ClinicOnboardTest(TestCase):
     def setUp(self):
         self.client = super_admin_client()
 
+    @override_settings(SUPABASE_URL='http://fake.supabase.io', SUPABASE_SERVICE_ROLE_KEY='fake-key')
     @patch('superadmin.views.http_requests.post')
     def test_successful_onboard_creates_clinic_and_profile(self, mock_post):
         new_user_id = str(uuid.uuid4())
@@ -187,6 +188,7 @@ class ClinicOnboardTest(TestCase):
         self.assertIn('clinic_name', resp.data)
         mock_post.assert_not_called()   # Supabase never called
 
+    @override_settings(SUPABASE_URL='http://fake.supabase.io', SUPABASE_SERVICE_ROLE_KEY='fake-key')
     @patch('superadmin.views.http_requests.post')
     def test_supabase_failure_rolls_back_clinic(self, mock_post):
         mock_post.return_value = _mock_supabase_fail()
@@ -198,6 +200,7 @@ class ClinicOnboardTest(TestCase):
         # Clinic row must NOT exist
         self.assertFalse(Clinic.objects.filter(slug='test-clinic').exists())
 
+    @override_settings(SUPABASE_URL='http://fake.supabase.io', SUPABASE_SERVICE_ROLE_KEY='fake-key')
     @patch('superadmin.views.http_requests.post')
     @patch('superadmin.views.http_requests.delete')
     def test_profile_failure_deletes_supabase_user_and_rolls_back_clinic(
