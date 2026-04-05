@@ -136,6 +136,14 @@ SUPABASE_JWT_SECRET = os.environ.get('SUPABASE_JWT_SECRET', '')
 if not SUPABASE_JWT_SECRET and not DEBUG:
     raise ImproperlyConfigured("Environment variable 'SUPABASE_JWT_SECRET' is required in production.")
 
+# ---------------------------------------------------------------------------
+# Chapa payment gateway
+# ---------------------------------------------------------------------------
+CHAPA_SECRET_KEY      = os.environ.get('CHAPA_SECRET_KEY', '')
+CHAPA_WEBHOOK_SECRET  = os.environ.get('CHAPA_WEBHOOK_SECRET', '')
+if not _testing and not DEBUG and not CHAPA_SECRET_KEY:
+    raise ImproperlyConfigured("Environment variable 'CHAPA_SECRET_KEY' is required in production.")
+
 # CORS — tighten CORS_ALLOWED_ORIGINS in production
 CORS_ALLOW_ALL_ORIGINS = DEBUG
 CORS_ALLOWED_ORIGINS = os.environ.get('CORS_ALLOWED_ORIGINS', '').split(',') if os.environ.get('CORS_ALLOWED_ORIGINS') else []
