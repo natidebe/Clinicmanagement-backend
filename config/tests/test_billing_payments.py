@@ -140,6 +140,18 @@ class InvoicePayViewTests(TestCase):
         self.assertEqual(payment.status, 'failed')
 
     @patch('billing.services.ChapaClient')
+    def test_qr_code_returned_as_base64_png(self, MockClient):
+        MockClient.return_value.initialize.return_value = 'https://checkout.chapa.co/test'
+        resp = auth_client(self.receptionist).post(
+            f'/api/billing/invoices/{self.invoice.id}/pay/',
+            {},
+            format='json',
+        )
+        self.assertEqual(resp.status_code, 201)
+        self.assertIn('qr_code', resp.data)
+        self.assertTrue(resp.data['qr_code'].startswith('data:image/png;base64,'))
+
+    @patch('billing.services.ChapaClient')
     def test_tx_ref_format(self, MockClient):
         MockClient.return_value.initialize.return_value = 'https://checkout.chapa.co/test'
         resp = auth_client(self.receptionist).post(
@@ -377,6 +389,81 @@ class ChapaWebhookTests(TestCase):
             content_type='application/json',
         )
         self.assertEqual(resp.status_code, 200)
+
+
+# ---------------------------------------------------------------------------
+# POST /api/billing/invoices/<id>/pay-cash/
+# ---------------------------------------------------------------------------
+
+class InvoiceCashPayTests(TestCase):
+
+    def setUp(self):
+        self.clinic_id    = uuid.uuid4()
+        self.admin        = make_user(self.clinic_id, 'admin')
+        self.receptionist = make_user(self.clinic_id, 'receptionist')
+        self.doctor       = make_user(self.clinic_id, 'doctor')
+        self.invoice      = _make_finalized_invoice(
+            self.clinic_id, self.admin, self.receptionist, self.doctor
+        )
+
+    def test_receptionist_can_record_cash_payment(self):
+        resp = auth_client(self.receptionist).post(
+            f'/api/billing/invoices/{self.invoice.id}/pay-cash/'
+        )
+        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.data['status'], 'success')
+        self.assertEqual(resp.data['mode'], 'cash')
+        self.assertIsNotNone(resp.data['paid_at'])
+
+    def test_cash_payment_amount_matches_invoice(self):
+        resp = auth_client(self.receptionist).post(
+            f'/api/billing/invoices/{self.invoice.id}/pay-cash/'
+        )
+        self.assertEqual(Decimal(resp.data['amount']), self.invoice.total_amount)
+
+    def test_cash_tx_ref_prefixed_with_cash(self):
+        resp = auth_client(self.receptionist).post(
+            f'/api/billing/invoices/{self.invoice.id}/pay-cash/'
+        )
+        self.assertTrue(resp.data['tx_ref'].startswith('cash-'))
+
+    def test_doctor_cannot_record_cash_payment(self):
+        resp = auth_client(self.doctor).post(
+            f'/api/billing/invoices/{self.invoice.id}/pay-cash/'
+        )
+        self.assertEqual(resp.status_code, 403)
+
+    def test_cannot_cash_pay_draft_invoice(self):
+        patient  = make_patient(self.clinic_id)
+        visit    = make_visit(self.clinic_id, patient, self.receptionist)
+        invoice  = make_invoice(self.clinic_id, visit, self.admin)
+        resp = auth_client(self.receptionist).post(
+            f'/api/billing/invoices/{invoice.id}/pay-cash/'
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_cannot_cash_pay_already_paid_invoice(self):
+        auth_client(self.receptionist).post(
+            f'/api/billing/invoices/{self.invoice.id}/pay-cash/'
+        )
+        resp = auth_client(self.receptionist).post(
+            f'/api/billing/invoices/{self.invoice.id}/pay-cash/'
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertIn('already been paid', resp.data['detail'].lower())
+
+    def test_cannot_cash_pay_invoice_from_other_clinic(self):
+        other_clinic_id = uuid.uuid4()
+        other_admin      = make_user(other_clinic_id, 'admin')
+        other_recep      = make_user(other_clinic_id, 'receptionist')
+        other_doctor     = make_user(other_clinic_id, 'doctor')
+        other_invoice    = _make_finalized_invoice(
+            other_clinic_id, other_admin, other_recep, other_doctor
+        )
+        resp = auth_client(self.receptionist).post(
+            f'/api/billing/invoices/{other_invoice.id}/pay-cash/'
+        )
+        self.assertEqual(resp.status_code, 404)
 
 
 # ---------------------------------------------------------------------------

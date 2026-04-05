@@ -7,6 +7,7 @@ from .views import (
     InvoiceFinalizeView,
     InvoiceVoidView,
     InvoicePayView,
+    InvoiceCashPayView,
     InvoicePaymentListView,
     ChapaWebhookView,
 )
@@ -19,6 +20,7 @@ urlpatterns = [
     path('invoices/<uuid:invoice_id>/finalize/',              InvoiceFinalizeView.as_view()),
     path('invoices/<uuid:invoice_id>/void/',                  InvoiceVoidView.as_view()),
     path('invoices/<uuid:invoice_id>/pay/',                   InvoicePayView.as_view()),
+    path('invoices/<uuid:invoice_id>/pay-cash/',              InvoiceCashPayView.as_view()),
     path('invoices/<uuid:invoice_id>/payments/',              InvoicePaymentListView.as_view()),
     path('webhook/chapa/',                                    ChapaWebhookView.as_view()),
 ]

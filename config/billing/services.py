@@ -8,8 +8,12 @@ going through an HTTP request.
 Raises BillingError for domain validation failures.
 All mutating functions are atomic.
 """
+import base64
+import io
 import uuid
 import logging
+
+import qrcode
 
 from django.conf import settings
 from django.db import transaction
@@ -225,6 +229,62 @@ def process_chapa_webhook(payload: dict) -> Payment | None:
     payment.save(update_fields=['status', 'chapa_ref', 'mode', 'paid_at'])
 
     return payment
+def generate_qr_code(url: str) -> str:
+    """
+    Generate a QR code PNG for *url* and return it as a base64-encoded string
+    suitable for embedding directly in a JSON response:
+        "data:image/png;base64,<encoded>"
+    The frontend can render it with:  <img src="...qr_code value..." />
+    """
+    img = qrcode.make(url)
+    buffer = io.BytesIO()
+    img.save(buffer, format='PNG')
+    encoded = base64.b64encode(buffer.getvalue()).decode('utf-8')
+    return f'data:image/png;base64,{encoded}'
+
+
+@transaction.atomic
+def record_cash_payment(invoice, received_by_id) -> Payment:
+    """
+    Record an immediate cash payment for a finalized invoice.
+
+    - No Chapa involved.
+    - Payment is created and immediately marked 'success'.
+    - Guards against paying an already-paid invoice.
+
+    Args:
+        invoice:         Invoice instance (must be 'finalized').
+        received_by_id:  UUID of the staff member who collected the cash.
+
+    Returns:
+        The created Payment instance.
+
+    Raises:
+        BillingError: if invoice is not finalized or already paid.
+    """
+    if invoice.status != 'finalized':
+        raise BillingError('Only finalized invoices can be paid.')
+
+    existing = Payment.objects.for_clinic(invoice.clinic_id).filter(
+        invoice_id=invoice.id,
+        status='success',
+    ).first()
+    if existing:
+        raise BillingError('This invoice has already been paid.')
+
+    return Payment.objects.create(
+        clinic_id=invoice.clinic_id,
+        invoice_id=invoice.id,
+        initiated_by=received_by_id,
+        tx_ref=f'cash-{invoice.id}-{uuid.uuid4().hex[:8]}',
+        amount=invoice.total_amount,
+        currency='ETB',
+        status='success',
+        mode='cash',
+        paid_at=timezone.now(),
+    )
+
+
 @transaction.atomic
 def void_invoice(invoice, voided_by_id, void_reason):
     """

@@ -25,7 +25,8 @@ from .serializers import (
 from .services import (
     BillingError,
     finalize_invoice, void_invoice, recompute_invoice_totals,
-    initiate_payment, process_chapa_webhook,
+    initiate_payment, record_cash_payment, generate_qr_code,
+    process_chapa_webhook,
 )
 from clinic.models import Visit
 from lab.models import LabTest, TestOrder
@@ -305,7 +306,32 @@ class InvoicePayView(AuditLogMixin, APIView):
         return Response({
             'payment':      PaymentSerializer(payment).data,
             'checkout_url': checkout_url,
+            'qr_code':      generate_qr_code(checkout_url),
         }, status=status.HTTP_201_CREATED)
+
+
+class InvoiceCashPayView(AuditLogMixin, APIView):
+    """
+    POST /api/billing/invoices/<id>/pay-cash/
+    Receptionist records an immediate cash payment.
+    No Chapa involved — payment is marked success instantly.
+    """
+    permission_classes = [HasPermission.for_permission('manage_billing')]
+
+    def post(self, request, invoice_id):
+        invoice = get_object_or_404(
+            Invoice.objects.for_clinic(request.user.clinic_id), id=invoice_id
+        )
+        try:
+            payment = record_cash_payment(
+                invoice=invoice,
+                received_by_id=request.user.id,
+            )
+        except BillingError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        self.log_action(request, 'create', 'payment', payment.id)
+        return Response(PaymentSerializer(payment).data, status=status.HTTP_201_CREATED)
 
 
 class InvoicePaymentListView(PaginatedListMixin, APIView):
