@@ -45,6 +45,9 @@ class LabTestListView(AuditLogMixin, PaginatedListMixin, APIView):
         qs = LabTest.objects.for_clinic(request.user.clinic_id)
         if request.user.role != 'admin':
             qs = qs.filter(is_active=True)
+        search = request.query_params.get('search')
+        if search:
+            qs = qs.filter(name__icontains=search)
         return self.paginate(qs, LabTestSerializer, request)
 
     def post(self, request):

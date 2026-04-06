@@ -31,9 +31,12 @@ class UserListView(AuditLogMixin, PaginatedListMixin, APIView):
 
     def get(self, request):
         qs = Profile.objects.for_clinic(request.user.clinic_id)
-        role = request.query_params.get('role')
+        role   = request.query_params.get('role')
+        search = request.query_params.get('search')
         if role:
             qs = qs.filter(role=role)
+        if search:
+            qs = qs.filter(full_name__icontains=search)
         return self.paginate(qs, ProfileSerializer, request)
 
     def post(self, request):

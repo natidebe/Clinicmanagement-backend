@@ -1,5 +1,6 @@
 import uuid
 
+from django.db import models
 from django.shortcuts import get_object_or_404
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -39,6 +40,12 @@ class PatientListView(AuditLogMixin, PaginatedListMixin, APIView):
 
     def get(self, request):
         qs = Patient.objects.for_clinic(request.user.clinic_id)
+        search = request.query_params.get('search')
+        if search:
+            qs = qs.filter(
+                models.Q(full_name__icontains=search) |
+                models.Q(phone__icontains=search)
+            )
         return self.paginate(qs, PatientSerializer, request)
 
     def post(self, request):
@@ -89,8 +96,11 @@ class VisitListView(AuditLogMixin, PaginatedListMixin, APIView):
     def get(self, request):
         qs = Visit.objects.for_clinic(request.user.clinic_id)
         status_filter = request.query_params.get('status')
+        patient_id    = request.query_params.get('patient_id')
         if status_filter:
             qs = qs.filter(status=status_filter)
+        if patient_id:
+            qs = qs.filter(patient_id=patient_id)
         return self.paginate(qs, VisitSerializer, request)
 
     def post(self, request):
