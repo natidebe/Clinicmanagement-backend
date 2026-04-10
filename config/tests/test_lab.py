@@ -101,7 +101,7 @@ class TestOrderTests(TestCase):
             'test_id': str(self.lab_test.id),
         }, format='json')
         self.assertEqual(resp.status_code, 201)
-        self.assertEqual(resp.data['status'], 'pending')
+        self.assertEqual(resp.data['status'], 'awaiting_payment')
         self.assertEqual(str(resp.data['ordered_by']), str(self.doctor.id))
 
     def test_receptionist_cannot_order_test(self):
